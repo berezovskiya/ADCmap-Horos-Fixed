@@ -112,10 +112,6 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ### v3.0 "Sudden Awakening" (Current)
 - Fixed critical NaN crash in `drawXAxis` and `drawYAxis` methods
-- Added comprehensive validation for mathematical operations
-- Improved stability on macOS 10.15+
-- Enhanced error logging
-- Updated build number to 300
 
 ### v2.0 (Previous)
 - Initial Horos port from OsiriX
@@ -128,13 +124,13 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## ⚠️ Disclaimer
 
-This code was developed for quick/easy ADC calculation from DICOM images. The developer is not an expert in DWI (Diffusion Weighted Imaging), so comments and feedback are welcome.
+This code was developed for quick/easy ADC calculation from DICOM images.
 
 This software is provided "as is" without warranty of any kind. Use at your own risk. Always verify results with clinical standards.
 
 ## 📄 License
 
-Open Source - see original repository for details
+Open Source - see original repository for details https://github.com/rossetantoine/ADCmap
 
 ---
 
