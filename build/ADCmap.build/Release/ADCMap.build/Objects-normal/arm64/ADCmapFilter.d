@@ -1,0 +1,20 @@
+dependencies: \
+  /Users/johnwayne/Documents/GoIT_AI_ML/playground/adcMap/ADCmap.hpg/ADCmap_Prefix.pch \
+  /Users/johnwayne/Documents/GoIT_AI_ML/playground/adcMap/ADCmap.hpg/ADCmapFilter.m \
+  /Users/johnwayne/Documents/GoIT_AI_ML/playground/adcMap/ADCmap.hpg/ADCmapFilter.h \
+  /Applications/Horos.app/Contents/Frameworks/Horos.framework/Headers/PluginFilter.h \
+  /Applications/Horos.app/Contents/Frameworks/Horos.framework/Headers/DCMPix.h \
+  /Applications/Horos.app/Contents/Frameworks/Horos.framework/Headers/options.h \
+  /Applications/Horos.app/Contents/Frameworks/Horos.framework/Headers/ViewerController.h \
+  /Applications/Horos.app/Contents/Frameworks/Horos.framework/Headers/DCMView.h \
+  /Applications/Horos.app/Contents/Frameworks/Horos.framework/Headers/N3Geometry.h \
+  /Applications/Horos.app/Contents/Frameworks/Horos.framework/Headers/OSIWindowController.h \
+  /Applications/Horos.app/Contents/Frameworks/Horos.framework/Headers/MyPoint.h \
+  /Applications/Horos.app/Contents/Frameworks/Horos.framework/Headers/ROI.h \
+  /Applications/Horos.app/Contents/Frameworks/DCM.framework/Headers/DCMObject.h \
+  /Applications/Horos.app/Contents/Frameworks/DCM.framework/Headers/DCMAttributeTag.h \
+  /Users/johnwayne/Documents/GoIT_AI_ML/playground/adcMap/ADCmap.hpg/ADC_ToolGraph.h \
+  /Users/johnwayne/Documents/GoIT_AI_ML/playground/adcMap/ADCmap.hpg/levmar.h \
+  /Users/johnwayne/Documents/GoIT_AI_ML/playground/adcMap/ADCmap.hpg/biexpfit.h \
+  /Applications/Horos.app/Contents/Frameworks/Horos.framework/Headers/Wait.h \
+  /Applications/Horos.app/Contents/Frameworks/Horos.framework/Headers/Notifications.h
