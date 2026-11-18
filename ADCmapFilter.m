@@ -26,9 +26,111 @@
 
 @implementation ADCmapFilter
 
+// ---------------------------------------------------------------------------------------------------
+// Automatic mode: when a 4D viewer opens with diffusion-weighted series (different b-values in the DICOM
+// headers), the plugin makes the usual set without being asked: one 2D viewer per b-value and the ADC map,
+// and closes the 4D viewer. Dynamic and perfusion series (no b-values) are left alone.
+// Preferences (defaults write <application> <key> -bool NO): ADCmapAutoDWI, ADCmapAutoClose4D.
+static NSString * const kADCAutoKey = @"ADCmapAutoDWI";
+static NSString * const kADCAutoCloseKey = @"ADCmapAutoClose4D";
+static NSMutableSet *gADCSeenViewers;       // viewers already looked at (their addresses)
+static BOOL gADCAutoBusy;
+
 - (void) initPlugin
 {
-	//NSLog(@"ADCmap Plugin Initiated.");
+	[[NSUserDefaults standardUserDefaults] registerDefaults:[NSDictionary dictionaryWithObjectsAndKeys:
+		[NSNumber numberWithBool:YES], kADCAutoKey, [NSNumber numberWithBool:YES], kADCAutoCloseKey, nil]];
+	if (!gADCSeenViewers) gADCSeenViewers = [[NSMutableSet alloc] init];
+	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(adcViewerLoaded:)
+												 name:@"OsirixViewerControllerDidLoadImagesNotification" object:nil];
+}
+
+- (void) adcViewerLoaded:(NSNotification *)note
+{
+	id viewer = [note object];
+	if (gADCAutoBusy || ![viewer respondsToSelector:@selector(maxMovieIndex)]) return;
+	// a 4D viewer announces every series it loads: look once, a moment after the last one
+	[NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(adcAutoProcess:) object:viewer];
+	[self performSelector:@selector(adcAutoProcess:) withObject:viewer afterDelay:0.8];
+}
+
+/// One 2D viewer holding a copy of one series (movie index) of a 4D viewer.
+- (ViewerController *) copyViewerWindow:(ViewerController *)source movieIndex:(int)v
+{
+	NSData *vD = nil;
+	NSMutableArray *newPixList = nil;
+	[source copyVolumeData:&vD andDCMPix:&newPixList forMovieIndex:v];
+	if (!vD) return nil;
+	ViewerController *copy = [source newWindow:newPixList :[source fileList:v] :vD];
+	[copy roiDeleteAll:source];
+	return copy;
+}
+
+- (void) adcAutoProcess:(ViewerController *)viewer
+{
+	if (gADCAutoBusy || ![[NSUserDefaults standardUserDefaults] boolForKey:kADCAutoKey]) return;
+	NSValue *key = [NSValue valueWithNonretainedObject:viewer];
+	if ([gADCSeenViewers containsObject:key]) return;
+	if (![[viewer window] isVisible]) return;
+	int n = [viewer maxMovieIndex];
+	if (n < 2) return;                          // an ordinary 2D viewer
+	[gADCSeenViewers addObject:key];
+	if (n > 16) return;                         // dozens of frames: a dynamic series, not a set of b-values
+	if (![[viewer modality] isEqualToString:@"MR"]) return;
+
+	// b-values of every series of the viewer, read as for the manual window
+	ViewerController *previous = viewerController;
+	viewerController = viewer;
+	nbvalues = n;
+	zsize = [[viewer pixList:0] count];
+	DCMPix *first = [[viewer pixList:0] objectAtIndex:0];
+	nxypts = [first pwidth] * [first pheight];
+	BOOL sameSize = YES;
+	for (int k = 1; k < n; ++k) if ((int)[[viewer pixList:k] count] != zsize) sameSize = NO;
+	for (int k = 0; k < n; ++k) bvals[k] = 0;
+	@try { [self getBValues]; } @catch (NSException *e) { NSLog(@"ADCmap auto: b-values not read: %@", e); }
+	int distinct = 0;
+	for (int k = 0; k < n; ++k) {
+		BOOL seen = NO;
+		for (int j = 0; j < k; ++j) if (bvals[j] == bvals[k]) seen = YES;
+		if (!seen && bvals[k] >= 0) ++distinct;
+	}
+
+	if (sameSize && distinct >= 2) {
+		// diffusion, with its b-values: make the set
+		gADCAutoBusy = YES;
+		@try {
+			for (int k = 0; k < n; ++k) {
+				ViewerController *b = [self copyViewerWindow:viewer movieIndex:k];
+				NSString *title = [NSString stringWithFormat:@"DWI b=%g", bvals[k]];
+				[[[b pixList] objectAtIndex:0] setGeneratedName:title];
+				b.windowTitle = title;
+				if (b) [gADCSeenViewers addObject:[NSValue valueWithNonretainedObject:b]];
+			}
+			[self calcADC:nil];                  // the ADC map in a viewer of its own, default settings
+		} @catch (NSException *e) { NSLog(@"ADCmap auto: %@", e); }
+		gADCAutoBusy = NO;
+		if ([[NSUserDefaults standardUserDefaults] boolForKey:kADCAutoCloseKey])
+			[[viewer window] performSelector:@selector(performClose:) withObject:nil afterDelay:0.4];
+		id app = [NSApp delegate];
+		if ([app respondsToSelector:@selector(tileWindows:)]) [app performSelector:@selector(tileWindows:) withObject:nil afterDelay:0.9];
+	} else if (sameSize && n <= 6) {
+		// A few series and no usable b-values. Only a series that calls itself diffusion is worth a question;
+		// anything else (multiphase, perfusion with few frames) opens as it always did.
+		NSString *name = @"";
+		@try { name = [[[[viewer currentSeries] valueForKey:@"name"] description] lowercaseString] ?: @""; } @catch (NSException *e) {}
+		BOOL looksDWI = NO;
+		for (NSString *hint in [NSArray arrayWithObjects:@"dwi", @"diff", @"dw_", @"ep2d", @"trace", @"b50", @"b800", @"b1000", @"resolve", nil])
+			if ([name rangeOfString:hint].location != NSNotFound) looksDWI = YES;
+		if (looksDWI) {
+			NSAlert *alert = [[[NSAlert alloc] init] autorelease];
+			[alert setMessageText:@"Опрацювати як дифузійно-зважені зображення?"];
+			[alert setInformativeText:[NSString stringWithFormat:@"У 4D-в'ювері %d серії, але b-значень у заголовках DICOM не знайдено. «Так» відкриє вікно ADCmap, де їх можна ввести вручну.", n]];
+			[alert addButtonWithTitle:@"Так"]; [alert addButtonWithTitle:@"Ні"];
+			if ([alert runModal] == NSAlertFirstButtonReturn) { [self filterImage:@"ADCmap"]; return; }      // keeps this viewer as the plugin's
+		}
+	}
+	viewerController = previous;
 }
 
 
@@ -206,6 +308,30 @@
 }
 
 
+// A value typed into a field or a table cell reaches the plugin only when the editing ends (Return, Tab or a
+// click elsewhere). Pressing a calculation button does not end it, so the map used to be computed with the
+// previous b-value. Every calculation therefore starts by ending the editing in the window: the cell is
+// committed (-tableView:setObjectValue:...) and the fields send their actions.
+- (void) commitEdits
+{
+	if (![ADCwindow makeFirstResponder:nil]) [ADCwindow endEditingFor:nil];
+}
+
+// While a b-value is being typed: take it at once, so the graph and the next calculation follow the typing.
+- (void) controlTextDidChange:(NSNotification *)note
+{
+	if ([note object] != bValueTable) return;
+	NSInteger row = [bValueTable editedRow];
+	NSText *editor = [[note userInfo] objectForKey:@"NSFieldEditor"];
+	NSString *text = [editor string];
+	if (row < 0 || row >= [bValueTable numberOfRows] || [text length] == 0) return;
+	NSScanner *scanner = [NSScanner scannerWithString:text];
+	float value;
+	if (![scanner scanFloat:&value] || ![scanner isAtEnd]) return;      // half-typed ("-", "1e"): wait for more
+	bvals[row] = value;
+	[self drawGraph:self];
+}
+
 - (IBAction)updateThreshold:(id)sender
 // Updates the threshold value when set by user in GUI.
 {
@@ -326,6 +452,7 @@
                                         // Some consolidation would be good.
 // !!! Would be nice to offer "Use IVIM fit for initial guess"
 {
+	[self commitEdits];
 	int minbind;                        // Index of minimum b-value
     int cutoffindex=-1;
     
@@ -533,6 +660,7 @@
 
 - (IBAction) calcADC:(id)sender
 {
+	[self commitEdits];
 	[self updateThreshold:sender];
 	[self updateSynthBValue:sender];
     showresidual = ([residualOn state] == NSOnState);
@@ -651,6 +779,7 @@
 
 - (IBAction) calcIVIM:(id)sender
 {
+	[self commitEdits];
     [self updateIVIMCutoff:sender];
     [self updateThreshold:sender];
     [self updateSynthBValue:sender];
