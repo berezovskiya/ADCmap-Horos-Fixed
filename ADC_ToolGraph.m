@@ -11,6 +11,18 @@
 #import "Horos/DICOMExport.h"
 #import "Horos/BrowserController.h"
 
+
+// AppKit raises an exception for a path point that is not a finite number. Horos logged such exceptions and
+// went on; a host that ends the process on an uncaught exception (IsiX) quits instead. A graph with no usable
+// range (one b-value, a flat signal, nothing measured yet) produces exactly such points, so every point
+// passes through here, and -drawRect: draws the empty graph when the ranges cannot be drawn at all.
+static inline NSPoint ADCSafePoint(NSPoint p)
+{
+	if (!isfinite(p.x)) p.x = 0;
+	if (!isfinite(p.y)) p.y = 0;
+	return p;
+}
+
 @implementation ADC_ToolGraph
 
 - (id) initWithFrame:(NSRect) rect 
@@ -189,8 +201,8 @@
 		p2.x = xAxisLoc[i];
 		p2.y = r.origin.y;
 		
-		[path moveToPoint:p1];
-		[path lineToPoint:p2];
+		[path moveToPoint:ADCSafePoint(p1)];
+		[path lineToPoint:ADCSafePoint(p2)];
 		[txtColor set];
 		
 		[path stroke];
@@ -280,8 +292,8 @@
 		p2.y = yAxisLoc[i];
 		p2.x = r.origin.x-3;
 		
-		[path moveToPoint:p1];
-		[path lineToPoint:p2];
+		[path moveToPoint:ADCSafePoint(p1)];
+		[path lineToPoint:ADCSafePoint(p2)];
 		[txtColor set];
 		
 		[path stroke];
@@ -340,8 +352,8 @@
 		p2.x = r.origin.x+r.size.width*(float)(timeXHere[i]-timeXHere[minValueX])/(float)(timeXHere[maxValueX]-timeXHere[minValueX]);
 		p2.y = r.origin.y+r.size.height;
 		
-		[path moveToPoint:p1];
-		[path lineToPoint:p2];
+		[path moveToPoint:ADCSafePoint(p1)];
+		[path lineToPoint:ADCSafePoint(p2)];
 		[txtColor set];
 		
 		[path stroke];
@@ -370,8 +382,8 @@
 		p2.x = r.origin.x+r.size.width;
 		p2.y = yAxisLoc[i];
 		
-		[path moveToPoint:p1];
-		[path lineToPoint:p2];
+		[path moveToPoint:ADCSafePoint(p1)];
+		[path lineToPoint:ADCSafePoint(p2)];
 		[txtColor set];
 		
 		[path stroke];
@@ -460,7 +472,7 @@
 			{
 				p1.x = r.origin.x+r.size.width*(float)(timeXHere[ii]-timeXHere[minValueX])/(float)(timeXHere[maxValueX]-timeXHere[minValueX]);
 				p1.y = r.origin.y+r.size.height*(float)(meanHere[idroi][ii]-minValueY)/(float)(maxValueY-minValueY);
-				[path moveToPoint:p1];
+				[path moveToPoint:ADCSafePoint(p1)];
 				
 				ii++;
 			}
@@ -468,7 +480,7 @@
 			{
 				p2.x = r.origin.x+r.size.width*(float)(timeXHere[ii]-timeXHere[minValueX])/(float)(timeXHere[maxValueX]-timeXHere[minValueX]);
 				p2.y = r.origin.y+r.size.height*(float)(meanHere[idroi][ii]-minValueY)/(float)(maxValueY-minValueY);
-				[path lineToPoint:p2];
+				[path lineToPoint:ADCSafePoint(p2)];
 				
 				ii++;
 			}
@@ -563,7 +575,11 @@
 	[txtColor set];
 	[NSBezierPath strokeRect:r];
 	
-	if (flag_blank == 1)
+	// nothing drawable: no spread of values or of time (division by zero below), or values that are not numbers
+	BOOL drawable = minValueX >= 0 && minValueX < 100 && maxValueX >= 0 && maxValueX < 100
+		&& isfinite(maxValueY) && isfinite(minValueY) && (maxValueY - minValueY) != 0
+		&& isfinite(timeXHere[maxValueX]) && isfinite(timeXHere[minValueX]) && (timeXHere[maxValueX] - timeXHere[minValueX]) != 0;
+	if (flag_blank == 1 || !drawable)
 	{
 		while (legendName.numberOfRows != 0)
 			[legendName removeRow:legendName.numberOfRows-1];

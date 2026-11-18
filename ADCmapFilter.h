@@ -97,6 +97,10 @@
 - (void) getBValues;	// Get B Values from DICOM header.
 
 - (void) closeSheet:(id) sender;
+- (void) commitEdits;
+- (ViewerController *) copyViewerWindow:(ViewerController *)source movieIndex:(int)v;
+- (void) adcAutoProcess:(ViewerController *)viewer;
+- (void) getBValues;
 
 - (IBAction) showGeneral:(id) sender;
 - (IBAction) showCompatibility:(id) sender;
