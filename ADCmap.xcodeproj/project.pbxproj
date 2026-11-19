@@ -9,7 +9,6 @@
 /* Begin PBXBuildFile section */
 		8D5B49AE048680CD000E48DA /* ADCmap_Prefix.pch in Headers */ = {isa = PBXBuildFile; fileRef = 32DBCF630370AF2F00C91783 /* ADCmap_Prefix.pch */; };
 		8D5B49B4048680CD000E48DA /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1058C7ADFEA557BF11CA2CBB /* Cocoa.framework */; };
-		99EFF82220A5E5B900304A7B /* DCM.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F18F3B7A20924CC900EA747E /* DCM.framework */; settings = {ATTRIBUTES = (Weak, ); }; };
 		99EFF82320A5E5CD00304A7B /* Horos.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F18F3B78209246BD00EA747E /* Horos.framework */; settings = {ATTRIBUTES = (Weak, ); }; };
 		ABA48A650680BB600089EB4F /* ADCmapFilter.h in Headers */ = {isa = PBXBuildFile; fileRef = ABA48A640680BB600089EB4F /* ADCmapFilter.h */; };
 		ABA48A670680BB690089EB4F /* ADCmapFilter.m in Sources */ = {isa = PBXBuildFile; fileRef = ABA48A660680BB690089EB4F /* ADCmapFilter.m */; };
@@ -54,7 +53,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				99EFF82320A5E5CD00304A7B /* Horos.framework in Frameworks */,
-				99EFF82220A5E5B900304A7B /* DCM.framework in Frameworks */,
 				8D5B49B4048680CD000E48DA /* Cocoa.framework in Frameworks */,
 				D3B6D137145669D0000EE968 /* liblevmar.a in Frameworks */,
 			);

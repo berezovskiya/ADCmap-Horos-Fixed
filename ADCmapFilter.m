@@ -7,6 +7,7 @@
 //
 
 
+#import <objc/runtime.h>
 #import "ADCmapFilter.h"
 #import "Horos/Wait.h"
 
@@ -28,19 +29,39 @@
 
 // ---------------------------------------------------------------------------------------------------
 // Automatic mode: when a 4D viewer opens with diffusion-weighted series (different b-values in the DICOM
-// headers), the plugin makes the usual set without being asked: one 2D viewer per b-value and the ADC map,
-// and closes the 4D viewer. Dynamic and perfusion series (no b-values) are left alone.
-// Preferences (defaults write <application> <key> -bool NO): ADCmapAutoDWI, ADCmapAutoClose4D.
+// headers), the plugin makes the usual set: a 2D viewer of the highest b-value and the ADC map, and closes
+// the 4D viewer. Dynamic and perfusion series (no b-values) are left alone.
+// Before it does so it asks; "No" opens the plugin window on the 4D viewer instead, for a calculation by hand.
+// A series acquired with a high b-value (ADCmapProstateMinB, 1400 and above: only the small field of view
+// prostate diffusion is) also gets an image synthesized at ADCmapProstateSynthB (1800).
+// Preferences (defaults write <application> <key> ...): ADCmapAutoDWI, ADCmapAutoClose4D, ADCmapAutoAsk
+// (-bool), ADCmapProstateMinB, ADCmapProstateSynthB (-float).
 static NSString * const kADCAutoKey = @"ADCmapAutoDWI";
 static NSString * const kADCAutoCloseKey = @"ADCmapAutoClose4D";
-static NSMutableSet *gADCSeenViewers;       // viewers already looked at (their addresses)
+static NSString * const kADCAutoAskKey = @"ADCmapAutoAsk";
+static NSString * const kADCProstateMinBKey = @"ADCmapProstateMinB";
+static NSString * const kADCProstateSynthBKey = @"ADCmapProstateSynthB";
+static char kADCSeenViewerKey;              // associated with a viewer already looked at; gone with the viewer
 static BOOL gADCAutoBusy;
+static float gADCAutoSynthB = -1;           // b-value an automatic run synthesizes an image at, or -1
+
+/// The b-value to synthesize an image at for a series with these b-values, or -1: the prostate rule.
+static float ADCSynthBForSeries(const float *b, int n)
+{
+	NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+	float minB = [defaults floatForKey:kADCProstateMinBKey], synthB = [defaults floatForKey:kADCProstateSynthBKey];
+	if (minB <= 0 || synthB <= 0) return -1;
+	float maxB = -1;
+	for (int k = 0; k < n; ++k) if (b[k] > maxB) maxB = b[k];
+	return maxB >= minB ? synthB : -1;
+}
 
 - (void) initPlugin
 {
 	[[NSUserDefaults standardUserDefaults] registerDefaults:[NSDictionary dictionaryWithObjectsAndKeys:
-		[NSNumber numberWithBool:YES], kADCAutoKey, [NSNumber numberWithBool:YES], kADCAutoCloseKey, nil]];
-	if (!gADCSeenViewers) gADCSeenViewers = [[NSMutableSet alloc] init];
+		[NSNumber numberWithBool:YES], kADCAutoKey, [NSNumber numberWithBool:YES], kADCAutoCloseKey,
+		[NSNumber numberWithBool:YES], kADCAutoAskKey,
+		[NSNumber numberWithFloat:1400], kADCProstateMinBKey, [NSNumber numberWithFloat:1800], kADCProstateSynthBKey, nil]];
 	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(adcViewerLoaded:)
 												 name:@"OsirixViewerControllerDidLoadImagesNotification" object:nil];
 }
@@ -69,12 +90,12 @@ static BOOL gADCAutoBusy;
 - (void) adcAutoProcess:(ViewerController *)viewer
 {
 	if (gADCAutoBusy || ![[NSUserDefaults standardUserDefaults] boolForKey:kADCAutoKey]) return;
-	NSValue *key = [NSValue valueWithNonretainedObject:viewer];
-	if ([gADCSeenViewers containsObject:key]) return;
+	if (objc_getAssociatedObject(viewer, &kADCSeenViewerKey)) return;
 	if (![[viewer window] isVisible]) return;
 	int n = [viewer maxMovieIndex];
 	if (n < 2) return;                          // an ordinary 2D viewer
-	[gADCSeenViewers addObject:key];
+	if (viewer == viewerController && [ADCwindow isVisible]) return;    // the plugin window is already open on it
+	objc_setAssociatedObject(viewer, &kADCSeenViewerKey, [NSNumber numberWithBool:YES], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 	if (n > 16) return;                         // dozens of frames: a dynamic series, not a set of b-values
 	if (![[viewer modality] isEqualToString:@"MR"]) return;
 
@@ -97,19 +118,37 @@ static BOOL gADCAutoBusy;
 	}
 
 	if (sameSize && distinct >= 2) {
-		// diffusion, with its b-values: make the set
+		// diffusion, with its b-values: ask, then make the set, or open the plugin window for a calculation by hand
+		float synthB = ADCSynthBForSeries(bvals, n);
+		if ([[NSUserDefaults standardUserDefaults] boolForKey:kADCAutoAskKey]) {
+			NSMutableArray *found = [NSMutableArray array];
+			for (int k = 0; k < n; ++k) [found addObject:[NSString stringWithFormat:@"%g", bvals[k]]];
+			NSString *info = [NSString stringWithFormat:@"Знайдено b = %@.", [found componentsJoinedByString:@", "]];
+			if (synthB >= 0) info = [info stringByAppendingFormat:@" Буде також синтезовано b=%g.", synthB];
+			info = [info stringByAppendingString:@" «Ні» відкриє вікно ADCmap для ручного розрахунку."];
+			NSAlert *alert = [[[NSAlert alloc] init] autorelease];
+			[alert setMessageText:@"Розрахувати ADC автоматично?"];
+			[alert setInformativeText:info];
+			[alert addButtonWithTitle:@"Так"]; [alert addButtonWithTitle:@"Ні"];
+			if ([alert runModal] != NSAlertFirstButtonReturn) { [self filterImage:@"ADCmap"]; return; }   // keeps this viewer as the plugin's
+		}
 		gADCAutoBusy = YES;
+		gADCAutoSynthB = synthB;
 		@try {
-			for (int k = 0; k < n; ++k) {
-				ViewerController *b = [self copyViewerWindow:viewer movieIndex:k];
-				NSString *title = [NSString stringWithFormat:@"DWI b=%g", bvals[k]];
+			// Two windows are left on the screen: the diffusion image to read and the ADC map. The diffusion
+			// image is the synthesized one when the prostate rule applies, the highest acquired b-value otherwise.
+			if (synthB < 0) {
+				int top = 0;
+				for (int k = 1; k < n; ++k) if (bvals[k] > bvals[top]) top = k;
+				ViewerController *b = [self copyViewerWindow:viewer movieIndex:top];
+				NSString *title = [NSString stringWithFormat:@"DWI b=%g", bvals[top]];
 				[[[b pixList] objectAtIndex:0] setGeneratedName:title];
 				b.windowTitle = title;
-				if (b) [gADCSeenViewers addObject:[NSValue valueWithNonretainedObject:b]];
 			}
 			[self calcADC:nil];                  // the ADC map in a viewer of its own, default settings
 		} @catch (NSException *e) { NSLog(@"ADCmap auto: %@", e); }
 		gADCAutoBusy = NO;
+		gADCAutoSynthB = -1;
 		if ([[NSUserDefaults standardUserDefaults] boolForKey:kADCAutoCloseKey])
 			[[viewer window] performSelector:@selector(performClose:) withObject:nil afterDelay:0.4];
 		id app = [NSApp delegate];
@@ -198,6 +237,10 @@ static BOOL gADCAutoBusy;
 		[self getBValues];
 		
 		[bValueTable reloadData];
+
+		// The prostate rule: propose the b-value to synthesize an image at; the field is the user's to change.
+		float proposedSynthB = ADCSynthBForSeries(bvals, nbvalues);
+		if (proposedSynthB >= 0) [synthBField setStringValue:[NSString stringWithFormat:@"%g", proposedSynthB]];
 	
 	} else {
 		NSRunInformationalAlertPanel(@"Error:",@"ADC map requires 2 series/echoes/b-values in 4D viewer", @"OK", nil, nil);
@@ -259,8 +302,6 @@ static BOOL gADCAutoBusy;
 			bvaltag = [NSString stringWithFormat:@"0018,9087"];
 		}
 		NSLog(@"Vendor is %@, bvalue tag is %@",vendor,bvaltag);
-		NSLog(@"B value is %12g",bvaldoubleprec);
-        
 		bvaldoubleprec = [[[[dcmObject attributeForTag:[DCMAttributeTag tagWithTagString:bvaltag]] value] description] doubleValue]; 
         // GE seems to encode multiple b-value scans with 1e9 added to bvalue.
         // Need double precision to capture/remove this, hence bvaldoubleprec.
@@ -270,6 +311,7 @@ static BOOL gADCAutoBusy;
             
         }
         bvals[count] = (float) bvaldoubleprec;
+		NSLog(@"B value is %12g",bvaldoubleprec);
 	}
 }
 
@@ -660,10 +702,17 @@ static BOOL gADCAutoBusy;
 
 - (IBAction) calcADC:(id)sender
 {
-	[self commitEdits];
-	[self updateThreshold:sender];
-	[self updateSynthBValue:sender];
-    showresidual = ([residualOn state] == NSOnState);
+	if (gADCAutoBusy) {
+		// automatic run: default settings, whatever a window left from an earlier calculation shows
+		threshold = 0;
+		synthbvalue = gADCAutoSynthB;
+		showresidual = 0;
+	} else {
+		[self commitEdits];
+		[self updateThreshold:sender];
+		[self updateSynthBValue:sender];
+		showresidual = ([residualOn state] == NSOnState);
+	}
 
 	float nonnegbvalues[MAXNBVALUES];	// Array of non-negative b-values (negative would be ignored)
 	int numnonnegbvalues = 0;				// Number of non-negative b-values
@@ -696,6 +745,7 @@ static BOOL gADCAutoBusy;
 			synthImage = [synthViewer pixList];
 			NSString *synthTitle = [NSString stringWithFormat:@"Synthesized b=%g",synthbvalue];
 			[[[synthViewer pixList] objectAtIndex:0] setGeneratedName:synthTitle];
+			synthViewer.windowTitle = synthTitle;
 		}
 
         // If synthesizing an image for given B-value, make another viewer
@@ -933,7 +983,9 @@ static BOOL gADCAutoBusy;
 	[ADCwindow orderOut:sender];
 	[NSApp endSheet: ADCwindow returnCode: NSCancelButton];	
 	[ADCwindow orderOut:nil];
-	[[NSNotificationCenter defaultCenter] removeObserver:self];
+	// Only what -awakeFromNib added: the observer of the automatic mode (-initPlugin) stays.
+	[[NSNotificationCenter defaultCenter] removeObserver:self name:NSTextViewDidChangeTypingAttributesNotification object:nil];
+	[[NSNotificationCenter defaultCenter] removeObserver:self name:OsirixROIChangeNotification object:nil];
 	
 }
 
